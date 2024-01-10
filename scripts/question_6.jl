@@ -23,7 +23,7 @@ using JSON, JuMP, Gurobi
 import LinearAlgebra: norm
 
 ### Chargement des donnees
-file_path = joinpath(@__DIR__, "instances/KIRO-tiny.json")
+file_path = joinpath(@__DIR__, "instances/KIRO-small.json")
 data = JSON.parsefile(file_path)
 
 Vˢ = data["substation_locations"]
@@ -53,7 +53,9 @@ indices_Ω = 1:length(Ω)
 
 ### Declaration du modele
 model = Model(Gurobi.Optimizer)
+set_optimizer_attribute(model, "BarHomogeneous", 1)
 set_optimizer_attribute(model, "Method", 3)
+set_optimizer_attribute(model, "NumericFocus", 1)
 
 
 ### Declaration des variables
@@ -117,7 +119,9 @@ end
 max_rating_S = maximum([S[s]["rating"] for s ∈ indices_S])
 max_rating_Q⁰ = maximum([Q⁰[q]["rating"] for q ∈ indices_Q⁰])
 max_rating_S_Q⁰ = max(max_rating_S, max_rating_Q⁰)
-Cⁿ = [sum(linearize_positive_part(Ω[ω]["power_generation"] * sum(z[v, t] for t ∈ indices_Vᵗ) - linearize_min(sum(S[s]["rating"] * x[v, s] for s ∈ indices_S), sum(Q⁰[q]["rating"] * y⁰[v, q] for q ∈ indices_Q⁰), max_rating_S_Q⁰), max(Ω[ω]["power_generation"]*length(Vᵗ), min(max_rating_Q⁰, max_rating_S))) for v ∈ indices_Vˢ) for ω ∈ indices_Ω]
+list_min = [linearize_min(sum(S[s]["rating"] * x[v, s] for s ∈ indices_S), sum(Q⁰[q]["rating"] * y⁰[v, q] for q ∈ indices_Q⁰), max_rating_S_Q⁰) for v ∈ indices_Vˢ]
+
+Cⁿ = [sum(linearize_positive_part(Ω[ω]["power_generation"] * sum(z[v, t] for t ∈ indices_Vᵗ) - list_min[v], max(Ω[ω]["power_generation"]*length(Vᵗ), min(max_rating_Q⁰, max_rating_S))) for v ∈ indices_Vˢ) for ω ∈ indices_Ω]
 
 # Contraintes pour ameliorer la relaxation continue du branch and bound
 borne_Cⁿ = [Ω[ω]["power_generation"]*length(Vᵗ) for ω ∈ indices_Ω]
@@ -126,8 +130,10 @@ borne_Cⁿ = [Ω[ω]["power_generation"]*length(Vᵗ) for ω ∈ indices_Ω]
 
 # Construction de Cᶠ
 max_rating_Qˢ = maximum([Qˢ[q]["rating"] for q ∈ indices_Qˢ])
+list_min = [linearize_min(sum(S[s]["rating"] * x[v̄, s] for s ∈ indices_S), sum(Q⁰[q]["rating"] * y⁰[v̄, q] for q ∈ indices_Q⁰), max_rating_S_Q⁰) for v̄ ∈ indices_Vˢ]
+
 Cᶠ = [linearize_positive_part(Ω[ω]["power_generation"] * sum(z[v, t] for t ∈ indices_Vᵗ) - sum(Qˢ[q]["rating"] * yˢ[ẽ, q] for ẽ ∈ indices_Eˢ, q ∈ indices_Qˢ if v ∈ Eˢ[ẽ]), max(Ω[ω]["power_generation"]*length(Vᵗ), max_rating_Qˢ)) +  
-      sum(linearize_positive_part(Ω[ω]["power_generation"] * sum(z[(Eˢ[ẽ][1]!=v ? Eˢ[ẽ][1] : Eˢ[ẽ][2]), t] for t ∈ indices_Vᵗ) + linearize_min(sum(Qˢ[q]["rating"]*yˢ[ẽ, q] for q ∈ indices_Qˢ), Ω[ω]["power_generation"] * sum(z[v, t] for t ∈ indices_Vᵗ), max(max_rating_Qˢ, Ω[ω]["power_generation"] * length(Vᵗ))) - linearize_min(sum(S[s]["rating"] * x[(Eˢ[ẽ][1]!=v ? Eˢ[ẽ][1] : Eˢ[ẽ][2]), s] for s ∈ indices_S), sum(Q⁰[q]["rating"] * y⁰[(Eˢ[ẽ][1]!=v ? Eˢ[ẽ][1] : Eˢ[ẽ][2]), q] for q ∈ indices_Q⁰), max_rating_S_Q⁰), max(Ω[ω]["power_generation"]*length(Vᵗ) + min(max_rating_Qˢ, Ω[ω]["power_generation"] * length(Vᵗ)), min(max_rating_Q⁰, max_rating_S))) for ẽ ∈ indices_Eˢ if v ∈ Eˢ[ẽ])
+      sum(linearize_positive_part(Ω[ω]["power_generation"] * sum(z[(Eˢ[ẽ][1]!=v ? Eˢ[ẽ][1] : Eˢ[ẽ][2]), t] for t ∈ indices_Vᵗ) + linearize_min(sum(Qˢ[q]["rating"]*yˢ[ẽ, q] for q ∈ indices_Qˢ), Ω[ω]["power_generation"] * sum(z[v, t] for t ∈ indices_Vᵗ), max(max_rating_Qˢ, Ω[ω]["power_generation"] * length(Vᵗ))) - list_min[(Eˢ[ẽ][1]!=v ? Eˢ[ẽ][1] : Eˢ[ẽ][2])], max(Ω[ω]["power_generation"]*length(Vᵗ) + min(max_rating_Qˢ, Ω[ω]["power_generation"] * length(Vᵗ)), min(max_rating_Q⁰, max_rating_S))) for ẽ ∈ indices_Eˢ if v ∈ Eˢ[ẽ])
       for v ∈ indices_Vˢ, ω ∈ indices_Ω]
 
 borne_Cᶠ = [(Ω[ω]["power_generation"]*length(Vᵗ) + min(max_rating_Qˢ, Ω[ω]["power_generation"]*length(Vᵗ))) * length(Vˢ) for v ∈ indices_Vˢ, ω ∈ indices_Ω]
@@ -165,3 +171,8 @@ c = sum(S[s]["cost"]*x[v, s] for v ∈ indices_Vˢ, s ∈ indices_S) +
 
 ### Resolution du probleme de minimisation
 optimize!(model)
+
+
+### Stockage de la solution
+#using JLD2
+#@save "small-sol.jld2" x=value.(x) y⁰=value.(y⁰) yˢ=value.(yˢ) z=value.(z)
