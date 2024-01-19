@@ -13,30 +13,6 @@ export is_feasible
 
 
 ## Classes et fonctions
-Base.@kwdef struct HeuristicSolution
-    inter_station_cables::Matrix{Int} # [i, j] = 0 if no cable, else cable_id
-    substations::Vector{SubStation}
-end
-
-function turn_into_solution(heuristic_sol::HeuristicSolution, instance::Instance)
-    turbine_links = Vector{Int}()
-
-    if isempty(heuristic_sol.substations)
-        # Si pas de substation contruite alors on relie les turbines aux emplacements vides les plus proches
-        built_substations_loc = instance.substation_locations
-    else
-        built_substations_loc = [instance.substation_locations[substation.id] for substation ∈ heuristic_sol.substations]
-    end
-
-    # On relie chaque turbine a la substation construite la plus proche
-    turbine_links = [built_substations_loc[argmin([distance(turb_loc, substation) for substation ∈ built_substations_loc])].id for turb_loc ∈ instance.wind_turbines]
-
-    return Solution(;
-        turbine_links = turbine_links,
-        inter_station_cables = heuristic_sol.inter_station_cables,
-        substations = heuristic_sol.substations
-    )
-end
 
 function mysetdif(A, max_Ω)
     """Calcule le complemntaire de A ⊂ Ω dans Ω = 1:max_Ω"""
@@ -60,10 +36,10 @@ end
 ## Parametres
 instance = read_instance(joinpath(@__DIR__, "instances/KIRO-small.json"))
 
-Tᵢ = - 1000 / log(0.5)
-Tₘᵢₙ = 20
+Tᵢ = - 5000 / log(0.5)
+Tₘᵢₙ = 5
 α = 0.9
-iterations_level = 2000
+iterations_level = 3000
 
 
 ## Main
@@ -82,7 +58,8 @@ cheapest_sub_sub_cable_type_id = ids_min_fixed_cost[argmin([cab_type.variable_co
 
 nearest_sub_id = argmin(distance(sub, instance.land) for sub ∈ instance.substation_locations)
 
-current_sol = HeuristicSolution(;
+current_sol = Solution(;
+    turbine_links = [nearest_sub_id for turb_loc ∈ instance.wind_turbines],
     inter_station_cables = zeros(Int, nb_substation_loc, nb_substation_loc),
     substations = [SubStation(; id=nearest_sub_id, substation_type=cheapest_sub_type_id, land_cable_type=cheapest_land_sub_cable_type_id)]
 )
@@ -94,7 +71,7 @@ while Tᵢ > Tₘᵢₙ
     global iteration_counter
 
 
-    ## Exploration du voisinnage substation V₁
+    ## Exploration du voisinage substation V₁
     sol_candidate = deepcopy(current_sol)
     p_choose_swap = length(current_sol.substations)*(nb_substation_loc-length(current_sol.substations)) / (length(current_sol.substations)*(nb_substation_loc-length(current_sol.substations)) + nb_substation_loc)
     do_we_swap = (rand()<p_choose_swap ? true : false)
@@ -103,51 +80,86 @@ while Tᵢ > Tₘᵢₙ
         built_sub_ids = [sub.id for sub ∈ current_sol.substations]
         empty_sub_ids = [id for id ∈ mysetdif(getindex.(built_sub_ids, 1), nb_substation_loc)]
 
-        old_loc_id = rand(built_sub_ids)
+        old_sub = rand(current_sol.substations)
         new_loc_id = rand(empty_sub_ids)
+        sub_type = old_sub.substation_type
+        cab_type = old_sub.land_cable_type
 
         # On detruit une station, on la reconstruit autre part
-        deleteat!(sol_candidate.substations, findall(sub->sub.id==old_loc_id, sol_candidate.substations))
-        push!(sol_candidate.substations, SubStation(; id=new_loc_id, substation_type=cheapest_sub_type_id, land_cable_type=cheapest_land_sub_cable_type_id))
+        deleteat!(sol_candidate.substations, findall(sub->sub.id==old_sub.id, sol_candidate.substations))
+        push!(sol_candidate.substations, SubStation(; id=new_loc_id, substation_type=sub_type, land_cable_type=cab_type))
 
         # On trensfere une eventuelle liaison substation-substation au nouvel emplacement
-        eventual_link = findall(x->x!=0, sol_candidate.inter_station_cables[old_loc_id,:])
+        eventual_link = findall(x->x!=0, sol_candidate.inter_station_cables[old_sub.id,:])
         if !isempty(eventual_link)
             global sol_candidate
             j = eventual_link[1]
-            cab_type = sol_candidate.inter_station_cables[old_loc_id, j]
-            sol_candidate.inter_station_cables[old_loc_id, j] = sol_candidate.inter_station_cables[j, old_loc_id] = 0
+            cab_type = sol_candidate.inter_station_cables[old_sub.id, j]
+            sol_candidate.inter_station_cables[old_sub.id, j] = sol_candidate.inter_station_cables[j, old_sub.id] = 0
             sol_candidate.inter_station_cables[new_loc_id, j] = sol_candidate.inter_station_cables[j, new_loc_id] = cab_type
+        end
+
+        # On transfere des eventuelles liaisons a des wind turbines
+        eventual_link = findall(x->x==old_sub.id, current_sol.turbine_links)
+        for turb_id ∈ eventual_link
+            global sol_candidate
+            sol_candidate.turbine_links[turb_id] = new_loc_id
         end
     else
         # On detruit ou reconstruit une substation
         sub_id = rand(1:nb_substation_loc)
 
         if isempty(findall(sub->sub.id==sub_id, sol_candidate.substations))
+            # Construction d'une nouvelle substation
             push!(sol_candidate.substations, SubStation(; id=sub_id, substation_type=cheapest_sub_type_id, land_cable_type=cheapest_land_sub_cable_type_id))
         elseif length(sol_candidate.substations) > 1
+            # Destruction d'une substation
             global sol_candidate
             deleteat!(sol_candidate.substations, findall(sub->sub.id==sub_id, sol_candidate.substations))
 
+            # On detruit un eventuel cable qui etait relie a une autre substation
             eventual_link = findall(x->x!=0, sol_candidate.inter_station_cables[sub_id,:])
             if !isempty(eventual_link)
                 global sol_candidate
                 j = findall(x->x!=0, sol_candidate.inter_station_cables[sub_id,:])[1]
                 sol_candidate.inter_station_cables[sub_id, j] = sol_candidate.inter_station_cables[j, sub_id] = 0
             end
+
+            # Les turbines qui etaient reliees a cette substation vont etre reliees a la substation construite la plus proche
+            eventual_links = findall(x->x==sub_id, current_sol.turbine_links)
+            for turb_id ∈ eventual_links
+                global sol_candidate
+                sol_candidate.turbine_links[turb_id] = sol_candidate.substations[argmin([distance(instance.wind_turbines[turb_id], instance.substation_locations[sub.id])] for sub ∈ sol_candidate.substations)].id
+            end
         end
     end
 
-    @assert is_feasible(turn_into_solution(sol_candidate, instance), instance)
-    current_sol_cost = cost(turn_into_solution(current_sol, instance), instance)
-    ∆f = cost(turn_into_solution(sol_candidate, instance), instance) - current_sol_cost
+    @assert is_feasible(sol_candidate, instance)
+    current_sol_cost = cost(current_sol, instance)
+    ∆f = cost(sol_candidate, instance) - current_sol_cost
+    if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
+        global current_sol
+        current_sol = sol_candidate
+    end
+
+    ## Exploration du voisinage turbine links V₂
+    sol_candidate = deepcopy(current_sol)
+
+    turb_id = rand(1:nb_turbines(instance))
+    sub_id = rand(current_sol.substations).id
+
+    sol_candidate.turbine_links[turb_id] = sub_id
+
+    @assert is_feasible(sol_candidate, instance)
+    current_sol_cost = cost(current_sol, instance)
+    ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
         global current_sol
         current_sol = sol_candidate
     end
 
 
-    ## Exploration du voisinnage cable inter substation V₂
+    ## Exploration du voisinage cable inter substation V₃
     sol_candidate = deepcopy(current_sol)
 
     built_cables = Vector{Tuple{Int, Int, Bool}}()
@@ -173,6 +185,9 @@ while Tᵢ > Tₘᵢₙ
     # On peut enlever un cable et le mettre a un endroit vide
     possible_swaps = vcat([(i, j) for i ∈ 1:length(built_cables), j ∈ 1:length(possible_constructions)]...)
 
+    # On peut aussi déconnecter un able d'une substation et le connecter a une autre substation
+    possible_swaps = vcat(possible_swaps, vcat([((cab[1], cab[2]), sub) for cab ∈ built_cables, sub ∈ non_connected_sub_ids]...), vcat([((cab[2], cab[1]), sub) for cab ∈ built_cables, sub ∈ non_connected_sub_ids]...))
+
     V₂ = vcat(built_cables, possible_constructions, possible_swaps)
 
     if !isempty(V₂)
@@ -180,13 +195,21 @@ while Tᵢ > Tₘᵢₙ
 
         if isa(x, Tuple{Int, Int, Bool})
             if x[3] == true
+                # On detruit un cable
                 global sol_candidate
                 sol_candidate.inter_station_cables[x[1], x[2]] = sol_candidate.inter_station_cables[x[2], x[1]] = 0
             else
+                # On construit un cable
                 global sol_candidate
                 sol_candidate.inter_station_cables[x[1], x[2]] = sol_candidate.inter_station_cables[x[2], x[1]] = cheapest_sub_sub_cable_type_id
             end
+        elseif isa(x, Tuple{Tuple{Int, Int}, Int})
+            # On deconnecte un cable d'une des substation et on le relie a une autre
+            cab_type = sol_candidate.inter_station_cables[x[1][1], x[1][2]]
+            sol_candidate.inter_station_cables[x[1][1], x[1][2]] = sol_candidate.inter_station_cables[x[1][2], x[1][1]] = 0
+            sol_candidate.inter_station_cables[x[1][1], x[2]] = sol_candidate.inter_station_cables[x[2], x[1][1]] = cab_type
         else
+            # On enleve un cable pour le mettre entre deux autres substations differentes des substations initiales
             global sol_candidate
             og_loc = built_cables[x[1]]
             new_loc = possible_constructions[x[2]]
@@ -196,16 +219,16 @@ while Tᵢ > Tₘᵢₙ
         end
     end
 
-    @assert is_feasible(turn_into_solution(sol_candidate, instance), instance)
-    current_sol_cost = cost(turn_into_solution(current_sol, instance), instance)
-    ∆f = cost(turn_into_solution(sol_candidate, instance), instance) - current_sol_cost
+    @assert is_feasible(sol_candidate, instance)
+    current_sol_cost = cost(current_sol, instance)
+    ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
         global current_sol
         current_sol = sol_candidate
     end
     
 
-    ## Exploration voisinnage substation type V₃
+    ## Exploration voisinage substation type V₄
     sol_candidate = deepcopy(current_sol)
     # V₃ = vcat([(sub.id, sub_type.id) for sub ∈ current_sol.substations, sub_type ∈ instance.substation_types]...)
     # x = rand(V₃)
@@ -214,16 +237,16 @@ while Tᵢ > Tₘᵢₙ
     current_substation = sol_candidate.substations[x[1]]
     sol_candidate.substations[x[1]] = @set current_substation.substation_type = x[2]
 
-    @assert is_feasible(turn_into_solution(sol_candidate, instance), instance)
-    current_sol_cost = cost(turn_into_solution(current_sol, instance), instance)
-    ∆f = cost(turn_into_solution(sol_candidate, instance), instance) - current_sol_cost
+    @assert is_feasible(sol_candidate, instance)
+    current_sol_cost = cost(current_sol, instance)
+    ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
         global current_sol
         current_sol = sol_candidate
     end
 
 
-    ## Exploration voisinnage substation substation cable type V₄
+    ## Exploration voisinage substation substation cable type V₅
     sol_candidate = deepcopy(current_sol)
 
     built_cables = Vector{Tuple{Int, Int}}()
@@ -239,9 +262,10 @@ while Tᵢ > Tₘᵢₙ
         global sol_candidate
         x = (rand(built_cables), rand(instance.substation_substation_cable_types).id)
         sol_candidate.inter_station_cables[x[1][1], x[1][2]] = sol_candidate.inter_station_cables[x[1][2], x[1][1]] = x[2]
-
-        @assert is_feasible(turn_into_solution(sol_candidate, instance), instance)
-        ∆f = cost(turn_into_solution(sol_candidate, instance), instance) - current_sol_cost
+        
+        @assert is_feasible(sol_candidate, instance)
+        current_sol_cost = cost(current_sol, instance)
+        ∆f = cost(sol_candidate, instance) - current_sol_cost
         if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
             global current_sol
             current_sol = sol_candidate
@@ -249,21 +273,20 @@ while Tᵢ > Tₘᵢₙ
     end
 
 
-    ## Exploration voisinnage land sbstation cable type V₅
+    ## Exploration voisinage land substation cable type V₆
     sol_candidate = deepcopy(current_sol)
 
     x = (rand(1:length(current_sol.substations)), rand(instance.land_substation_cable_types).id)
     current_substation = sol_candidate.substations[x[1]]
     sol_candidate.substations[x[1]] = @set current_substation.substation_type = x[2]
 
-    @assert is_feasible(turn_into_solution(sol_candidate, instance), instance)
-    current_sol_cost = cost(turn_into_solution(current_sol, instance), instance)
-    ∆f = cost(turn_into_solution(sol_candidate, instance), instance) - current_sol_cost
+    @assert is_feasible(sol_candidate, instance)
+    current_sol_cost = cost(current_sol, instance)
+    ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
         global current_sol
         current_sol = sol_candidate
     end
-
 
     ## Baisse de la temperature
     if iteration_counter == iterations_level
@@ -277,5 +300,5 @@ while Tᵢ > Tₘᵢₙ
     iteration_counter += 1
 end
 
-current_sol_cost = cost(turn_into_solution(current_sol, instance), instance)
+current_sol_cost = cost(current_sol, instance)
 current_sol_cost
