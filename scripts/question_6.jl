@@ -40,8 +40,9 @@ model = Model(Gurobi.Optimizer)
 @variable(model, yˢ[e = indices_Eˢ, q = indices_Qˢ], binary=true, start=0)
 @variable(model, z[v = indices_Vˢ, t = indices_Vᵗ], binary=true, start=0)
 
+#=
 # On charge la solution renvoyee par l'algorithme heuristique et on la met en valeur initiale
-file_path = joinpath(@__DIR__, "solutions/sol_small_heur.json")
+file_path = joinpath(@__DIR__, "solutions/small-sol-heur.json")
 sol_heur = JSON.parsefile(file_path)
 
 for sub ∈ sol_heur["substations"]
@@ -61,7 +62,7 @@ end
 for turb ∈ sol_heur["turbines"]
     set_start_value(z[turb["substation_id"], turb["id"]], 1)
 end
-
+=#
 
 
 ### Declaration des contraintes
@@ -177,3 +178,54 @@ optimize!(model)
 ### Stockage de la solution
 #using JLD2
 #@save "small-sol.jld2" x=value.(x) y⁰=value.(y⁰) yˢ=value.(yˢ) z=value.(z)
+x_value = [Int(value(x[i, j])) for i ∈ indices_Vˢ, j ∈ indices_S]
+y⁰_value = [Int(value(y⁰[i, j])) for i ∈ indices_E⁰, j ∈ indices_Q⁰]
+yˢ_value = [Int(value(yˢ[i, j])) for i ∈ indices_Eˢ, j ∈ indices_Qˢ]
+z_value = [Int(value(z[i, j])) for i ∈ indices_Vˢ, j ∈ indices_Vᵗ]
+
+
+using JSON, Shuffle, Setfield
+
+include("src/utils.jl")
+include("src/instance.jl")
+include("src/solution.jl")
+include("src/parsing.jl")
+include("src/eval.jl")
+
+export Instance, Solution
+export read_instance, read_solution, write_solution
+export construction_cost, operational_cost, cost
+export is_feasible
+
+instance = read_instance(joinpath(@__DIR__, "instances/KIRO-small.json"))
+
+substations = Vector{SubStation}()
+for v ∈ indices_Vˢ
+    res = findall(x->x==1, x_value[v,:])
+    if !isempty(res)
+        sub_type = res[1]
+        cab_type = findall(x->x==1, y⁰_value[v,:])[1]
+        push!(substations, SubStation(; id=v, substation_type=sub_type, land_cable_type=cab_type))
+    end
+end
+
+turbine_links = Vector{Int}()
+for t ∈ indices_Vᵗ
+    v = findall(x->x==1, z_value[:,t])[1]
+    push!(turbine_links, v)
+end
+
+inter_station_cables = zeros(Int, length(indices_Vˢ), length(indices_Vˢ))
+for e ∈ indices_Eˢ
+    res = findall(x->x==1, yˢ_value[e,:])
+    if !isempty(res)
+        i, j = Eˢ[e]
+        inter_station_cables[i, j] = inter_station_cables[j, i] = res[1]
+    end
+end
+
+solution = Solution(; turbine_links, inter_station_cables, substations)
+
+println(cost(solution, instance))
+
+#write_solution(solution, "KIRO-small-sol_20.json")

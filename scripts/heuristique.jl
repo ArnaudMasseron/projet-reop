@@ -36,7 +36,7 @@ end
 ## Parametres
 instance = read_instance(joinpath(@__DIR__, "instances/KIRO-small.json"))
 
-Tᵢ = - 5000 / log(0.5)
+Tᵢ = - 2000 / log(0.3)
 Tₘᵢₙ = 5
 α = 0.9
 iterations_level = 3000
@@ -78,7 +78,7 @@ while Tᵢ > Tₘᵢₙ
 
     if do_we_swap
         built_sub_ids = [sub.id for sub ∈ current_sol.substations]
-        empty_sub_ids = [id for id ∈ mysetdif(getindex.(built_sub_ids, 1), nb_substation_loc)]
+        empty_sub_ids = [id for id ∈ mysetdif(getindex.(built_sub_ids, 1), nb_substation_loc)] #mysetdif a une complexite O(NlogN) avec N = length(current_sol.substations)
 
         old_sub = rand(current_sol.substations)
         new_loc_id = rand(empty_sub_ids)
@@ -90,7 +90,7 @@ while Tᵢ > Tₘᵢₙ
         push!(sol_candidate.substations, SubStation(; id=new_loc_id, substation_type=sub_type, land_cable_type=cab_type))
 
         # On trensfere une eventuelle liaison substation-substation au nouvel emplacement
-        eventual_link = findall(x->x!=0, sol_candidate.inter_station_cables[old_sub.id,:])
+        eventual_link = findall(x->x!=0, sol_candidate.inter_station_cables[old_sub.id,:]) # complexite O(N) avec N = length(current_sol.substations)
         if !isempty(eventual_link)
             global sol_candidate
             j = eventual_link[1]
@@ -100,7 +100,7 @@ while Tᵢ > Tₘᵢₙ
         end
 
         # On transfere des eventuelles liaisons a des wind turbines
-        eventual_link = findall(x->x==old_sub.id, current_sol.turbine_links)
+        eventual_link = findall(x->x==old_sub.id, current_sol.turbine_links) # complexite O(N) avec N = length(current_sol.turbine_links)
         for turb_id ∈ eventual_link
             global sol_candidate
             sol_candidate.turbine_links[turb_id] = new_loc_id
@@ -112,7 +112,7 @@ while Tᵢ > Tₘᵢₙ
         if isempty(findall(sub->sub.id==sub_id, sol_candidate.substations))
             # Construction d'une nouvelle substation
             push!(sol_candidate.substations, SubStation(; id=sub_id, substation_type=cheapest_sub_type_id, land_cable_type=cheapest_land_sub_cable_type_id))
-        elseif length(sol_candidate.substations) > 1
+        elseif length(sol_candidate.substations) > 1 # On ne veut pas qu'il y ait 0 substations apres la manip
             # Destruction d'une substation
             global sol_candidate
             deleteat!(sol_candidate.substations, findall(sub->sub.id==sub_id, sol_candidate.substations))
@@ -145,8 +145,8 @@ while Tᵢ > Tₘᵢₙ
     ## Exploration du voisinage turbine links V₂
     sol_candidate = deepcopy(current_sol)
 
-    turb_id = rand(1:nb_turbines(instance))
-    sub_id = rand(current_sol.substations).id
+    turb_id = rand(1:nb_turbines(instance)) # complexite O(|Vᵗ|)
+    sub_id = rand(current_sol.substations).id # complexite O(|Vˢ|)
 
     sol_candidate.turbine_links[turb_id] = sub_id
 
@@ -164,6 +164,7 @@ while Tᵢ > Tₘᵢₙ
 
     built_cables = Vector{Tuple{Int, Int, Bool}}()
     non_connected_sub_ids = Vector{Int}()
+    # Complexite de cette boucle for: O(|Vˢ|²)
     for sub ∈ current_sol.substations
         i = sub.id
         sub_linked = findall(x->x!=0, current_sol.inter_station_cables[i,:])
@@ -176,6 +177,7 @@ while Tᵢ > Tₘᵢₙ
     end
 
     possible_constructions = Vector{Tuple{Int, Int, Bool}}()
+    # Complexite de cette boucle for: O(|Vˢ|²)
     for i ∈ 1:length(non_connected_sub_ids)
         for j ∈ i+1:length(non_connected_sub_ids)
             push!(possible_constructions, (non_connected_sub_ids[i], non_connected_sub_ids[j], false))
@@ -183,10 +185,10 @@ while Tᵢ > Tₘᵢₙ
     end
 
     # On peut enlever un cable et le mettre a un endroit vide
-    possible_swaps = vcat([(i, j) for i ∈ 1:length(built_cables), j ∈ 1:length(possible_constructions)]...)
+    possible_swaps = vcat([(i, j) for i ∈ 1:length(built_cables), j ∈ 1:length(possible_constructions)]...) # Complexite O(|Vˢ|²)
 
     # On peut aussi déconnecter un able d'une substation et le connecter a une autre substation
-    possible_swaps = vcat(possible_swaps, vcat([((cab[1], cab[2]), sub) for cab ∈ built_cables, sub ∈ non_connected_sub_ids]...), vcat([((cab[2], cab[1]), sub) for cab ∈ built_cables, sub ∈ non_connected_sub_ids]...))
+    possible_swaps = vcat(possible_swaps, vcat([((cab[1], cab[2]), sub) for cab ∈ built_cables, sub ∈ non_connected_sub_ids]...), vcat([((cab[2], cab[1]), sub) for cab ∈ built_cables, sub ∈ non_connected_sub_ids]...)) # Complexite O(|Vˢ|²)
 
     V₂ = vcat(built_cables, possible_constructions, possible_swaps)
 
@@ -230,9 +232,8 @@ while Tᵢ > Tₘᵢₙ
 
     ## Exploration voisinage substation type V₄
     sol_candidate = deepcopy(current_sol)
-    # V₃ = vcat([(sub.id, sub_type.id) for sub ∈ current_sol.substations, sub_type ∈ instance.substation_types]...)
-    # x = rand(V₃)
-    x = (rand(1:length(current_sol.substations)), rand(instance.substation_types).id)
+
+    x = (rand(1:length(current_sol.substations)), rand(instance.substation_types).id) # Complexite O(|Vˢ|+|S|)
     
     current_substation = sol_candidate.substations[x[1]]
     sol_candidate.substations[x[1]] = @set current_substation.substation_type = x[2]
@@ -250,6 +251,7 @@ while Tᵢ > Tₘᵢₙ
     sol_candidate = deepcopy(current_sol)
 
     built_cables = Vector{Tuple{Int, Int}}()
+    # Complexite O(|Vˢ|²)
     for i ∈ 1:nb_substation_loc
         sub_linked = findall(x->x!=0, current_sol.inter_station_cables[i,:])
 
@@ -260,7 +262,7 @@ while Tᵢ > Tₘᵢₙ
 
     if !isempty(built_cables)
         global sol_candidate
-        x = (rand(built_cables), rand(instance.substation_substation_cable_types).id)
+        x = (rand(built_cables), rand(instance.substation_substation_cable_types).id) # Complexite O(|V^s| + |Qˢ|)
         sol_candidate.inter_station_cables[x[1][1], x[1][2]] = sol_candidate.inter_station_cables[x[1][2], x[1][1]] = x[2]
         
         @assert is_feasible(sol_candidate, instance)
@@ -276,7 +278,7 @@ while Tᵢ > Tₘᵢₙ
     ## Exploration voisinage land substation cable type V₆
     sol_candidate = deepcopy(current_sol)
 
-    x = (rand(1:length(current_sol.substations)), rand(instance.land_substation_cable_types).id)
+    x = (rand(1:length(current_sol.substations)), rand(instance.land_substation_cable_types).id) # Complexite en O(|Vˢ|+|Q⁰|)
     current_substation = sol_candidate.substations[x[1]]
     sol_candidate.substations[x[1]] = @set current_substation.substation_type = x[2]
 
