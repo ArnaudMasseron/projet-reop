@@ -35,20 +35,15 @@ model = Model(Gurobi.Optimizer)
 
 
 ### Declaration des variables
-@variable(model, x[v = indices_Vˢ, s = indices_S], binary=true)
-@variable(model, y⁰[e ∈ indices_E⁰, q ∈ indices_Q⁰], binary=true)
-@variable(model, yˢ[e = indices_Eˢ, q = indices_Qˢ], binary=true)
-@variable(model, z[v = indices_Vˢ, t = indices_Vᵗ], binary=true)
+@variable(model, x[v = indices_Vˢ, s = indices_S], binary=true, start=0)
+@variable(model, y⁰[e ∈ indices_E⁰, q ∈ indices_Q⁰], binary=true, start=0)
+@variable(model, yˢ[e = indices_Eˢ, q = indices_Qˢ], binary=true, start=0)
+@variable(model, z[v = indices_Vˢ, t = indices_Vᵗ], binary=true, start=0)
 
 #=
 # On charge la solution renvoyee par l'algorithme heuristique et on la met en valeur initiale
 file_path = joinpath(@__DIR__, "solutions/KIRO-small-sol_20.json")
 sol_heur = JSON.parsefile(file_path)
-
-set_start_value.(x, 0)
-set_start_value.(y⁰, 0)
-set_start_value.(yˢ, 0)
-set_start_value.(z, 0)
 
 for sub ∈ sol_heur["substations"]
     set_start_value(x[sub["id"], sub["substation_type"]], 1)
@@ -95,17 +90,6 @@ end
 
 ### Creation de la fonction objectif
 
-function linearize_product(α, β, m, M)
-    # On suppose ici que β ∈ [m, M]
-    μ = @variable(model)
-
-    @constraint(model, μ - M*α <= 0)
-    @constraint(model, μ - β + M*(1 - α) >= 0)
-    @constraint(model, μ + α*m >= 0)
-    @constraint(model, μ - β + m*(1 - α)<= 0)
-
-    return μ
-end
 
 function linearize_positive_part(β, M)
     α = @variable(model, binary=true)
@@ -113,7 +97,7 @@ function linearize_positive_part(β, M)
     @constraint(model, α * M - β <= M)
     @constraint(model, α * M - β >= 0)
 
-    return linearize_product(α, β, M, M)
+    return α * β
 end
 
 function linearize_min(α, β, M)
@@ -170,7 +154,7 @@ c = sum(S[s]["cost"]*x[v, s] for v ∈ indices_Vˢ, s ∈ indices_S) +
     sum((Q⁰[q]["fixed_cost"] + norm([Vˢ[v]["x"], Vˢ[v]["y"]] - coords_v₀) * Q⁰[q]["variable_cost"]) * y⁰[v, q] for v ∈ indices_Vˢ, q ∈ indices_Q⁰) + 
     sum((Qˢ[q]["fixed_cost"] + norm([Vˢ[Eˢ[e][1]]["x"], Vˢ[Eˢ[e][1]]["y"]] - [Vˢ[Eˢ[e][2]]["x"], Vˢ[Eˢ[e][2]]["y"]]) * Qˢ[q]["variable_cost"]) * yˢ[e, q] for e ∈ indices_Eˢ, q ∈ indices_Qˢ) + 
     sum((data["general_parameters"]["fixed_cost_cable"] + norm([Vˢ[v]["x"], Vˢ[v]["y"]] - [Vᵗ[t]["x"], Vᵗ[t]["y"]]) * data["general_parameters"]["variable_cost_cable"]) * z[v, t] for v ∈ indices_Vˢ, t ∈ indices_Vᵗ) + 
-    sum(Ω[ω]["probability"] * (sum(sum(S[s]["probability_of_failure"] * 1000 * (linearize_product(x[v, s], Cᶜ_Cᶠ[v, ω]/1000, 0, borne_Cᶜ_Cᶠ[v, ω]/1000) - linearize_product(x[v, s], Cᶜ_Cⁿ[ω]/1000, 0, borne_Cᶜ_Cⁿ[ω]/1000)) for s ∈ indices_S) + sum(Q⁰[q]["probability_of_failure"] * 1000 * (linearize_product(y⁰[v, q], Cᶜ_Cᶠ[v, ω]/1000, 0, borne_Cᶜ_Cᶠ[v, ω]/1000) - linearize_product(y⁰[v, q], Cᶜ_Cⁿ[ω]/1000, 0, borne_Cᶜ_Cⁿ[ω]/1000)) for q ∈ indices_Q⁰) for v ∈ indices_Vˢ) + Cᶜ_Cⁿ[ω]) for ω ∈ indices_Ω)
+    sum(Ω[ω]["probability"] * (sum(sum(S[s]["probability_of_failure"] * x[v, s] * (Cᶜ_Cᶠ[v, ω] - Cᶜ_Cⁿ[ω]) for s ∈ indices_S) + sum(Q⁰[q]["probability_of_failure"] * y⁰[v, q] * (Cᶜ_Cᶠ[v, ω] - Cᶜ_Cⁿ[ω]) for q ∈ indices_Q⁰) for v ∈ indices_Vˢ) + Cᶜ_Cⁿ[ω]) for ω ∈ indices_Ω)
 
 # Declaration de la fonction objectif
 @objective(model, Min, c)
