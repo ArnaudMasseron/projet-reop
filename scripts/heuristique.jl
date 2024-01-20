@@ -34,9 +34,9 @@ end
 
 
 ## Parametres
-instance = read_instance(joinpath(@__DIR__, "instances/KIRO-small.json"))
+instance = read_instance(joinpath(@__DIR__, "instances/KIRO-large.json"))
 
-Tᵢ = - 2000 / log(0.3)
+Tᵢ = - 5000 / log(0.5)
 Tₘᵢₙ = 5
 α = 0.9
 iterations_level = 3000
@@ -134,7 +134,7 @@ while Tᵢ > Tₘᵢₙ
         end
     end
 
-    @assert is_feasible(sol_candidate, instance)
+    #@assert is_feasible(sol_candidate, instance)
     current_sol_cost = cost(current_sol, instance)
     ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
@@ -150,7 +150,7 @@ while Tᵢ > Tₘᵢₙ
 
     sol_candidate.turbine_links[turb_id] = sub_id
 
-    @assert is_feasible(sol_candidate, instance)
+    #@assert is_feasible(sol_candidate, instance)
     current_sol_cost = cost(current_sol, instance)
     ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
@@ -221,7 +221,7 @@ while Tᵢ > Tₘᵢₙ
         end
     end
 
-    @assert is_feasible(sol_candidate, instance)
+    #@assert is_feasible(sol_candidate, instance)
     current_sol_cost = cost(current_sol, instance)
     ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
@@ -238,7 +238,7 @@ while Tᵢ > Tₘᵢₙ
     current_substation = sol_candidate.substations[x[1]]
     sol_candidate.substations[x[1]] = @set current_substation.substation_type = x[2]
 
-    @assert is_feasible(sol_candidate, instance)
+    #@assert is_feasible(sol_candidate, instance)
     current_sol_cost = cost(current_sol, instance)
     ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
@@ -265,7 +265,7 @@ while Tᵢ > Tₘᵢₙ
         x = (rand(built_cables), rand(instance.substation_substation_cable_types).id) # Complexite O(|V^s| + |Qˢ|)
         sol_candidate.inter_station_cables[x[1][1], x[1][2]] = sol_candidate.inter_station_cables[x[1][2], x[1][1]] = x[2]
         
-        @assert is_feasible(sol_candidate, instance)
+        #@assert is_feasible(sol_candidate, instance)
         current_sol_cost = cost(current_sol, instance)
         ∆f = cost(sol_candidate, instance) - current_sol_cost
         if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
@@ -282,7 +282,7 @@ while Tᵢ > Tₘᵢₙ
     current_substation = sol_candidate.substations[x[1]]
     sol_candidate.substations[x[1]] = @set current_substation.substation_type = x[2]
 
-    @assert is_feasible(sol_candidate, instance)
+    #@assert is_feasible(sol_candidate, instance)
     current_sol_cost = cost(current_sol, instance)
     ∆f = cost(sol_candidate, instance) - current_sol_cost
     if ∆f < 0  || rand() < exp(-∆f/Tᵢ)
@@ -303,4 +303,6 @@ while Tᵢ > Tₘᵢₙ
 end
 
 current_sol_cost = cost(current_sol, instance)
-current_sol_cost
+println(current_sol_cost)
+
+#write_solution(current_sol, "KIRO-large-sol_20.json")

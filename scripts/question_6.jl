@@ -42,7 +42,7 @@ model = Model(Gurobi.Optimizer)
 
 #=
 # On charge la solution renvoyee par l'algorithme heuristique et on la met en valeur initiale
-file_path = joinpath(@__DIR__, "solutions/small-sol-heur.json")
+file_path = joinpath(@__DIR__, "solutions/KIRO-small-sol_20.json")
 sol_heur = JSON.parsefile(file_path)
 
 for sub ∈ sol_heur["substations"]
@@ -176,8 +176,6 @@ optimize!(model)
 
 
 ### Stockage de la solution
-#using JLD2
-#@save "small-sol.jld2" x=value.(x) y⁰=value.(y⁰) yˢ=value.(yˢ) z=value.(z)
 x_value = [Int(value(x[i, j])) for i ∈ indices_Vˢ, j ∈ indices_S]
 y⁰_value = [Int(value(y⁰[i, j])) for i ∈ indices_E⁰, j ∈ indices_Q⁰]
 yˢ_value = [Int(value(yˢ[i, j])) for i ∈ indices_Eˢ, j ∈ indices_Qˢ]
@@ -228,4 +226,4 @@ solution = Solution(; turbine_links, inter_station_cables, substations)
 
 println(cost(solution, instance))
 
-#write_solution(solution, "KIRO-small-sol_20.json")
+#write_solution(solution, "sol_small-MILP.json")
